@@ -7,6 +7,8 @@
  *              processes, redirection, and signal handling.
  */
 
+ // Get rid of red squiggly lines
+ #define _POSIX_C_SOURCE 200809L
  // prints
 #include <stdio.h>
 // bools
@@ -66,26 +68,26 @@ volatile sig_atomic_t printForegroundMessage = 0;
 
 
 /* Function declarations */
-void setup_signal_handlers();
-void handle_sigtstp(int signo);
+void signalHandlers();
+void handleSigtstp(int signo);
 
-void initialize_command(struct commandLine* currCommand);
+void makeCmd(struct commandLine* currCommand);
 void free_command(struct commandLine* currCommand);
-void parse_input(char* input, struct commandLine* currCommand);
+void inputParser(char* input, struct commandLine* currCommand);
 
-bool is_blank_or_comment(char* input);
-bool is_builtin_command(struct commandLine* currCommand);
+bool isEmpty(char* input);
+bool isBuiltIn(struct commandLine* currCommand);
 
-void run_builtin_command(struct commandLine* currCommand);
-void run_external_command(struct commandLine* currCommand);
+void runCmd(struct commandLine* currCommand);
+void runExtCmd(struct commandLine* currCommand);
 
-void check_background_processes();
-void add_background_process(pid_t processId);
-void remove_background_process(int index);
-void kill_background_processes();
+void checkBgProc();
+void addBgProc(pid_t processId);
+void rmBgProc(int index);
+void killBgProc();
 
 void print_status();
-void print_delayed_foreground_message();
+void printFgMsg();
 
 
 int main()
@@ -93,7 +95,7 @@ int main()
     char input[MAXINPUTLEN];
     struct commandLine currCommand;
 
-    setup_signal_handlers();
+    signalHandlers();
 
     while(true)
     {
@@ -102,8 +104,8 @@ int main()
          * This is so the message prints right before the user gets command
          * line access again.
          */
-        check_background_processes();
-        print_delayed_foreground_message();
+        checkBgProc();
+        printFgMsg();
 
         printf(": ");
         fflush(stdout);
@@ -118,13 +120,13 @@ int main()
             continue;
         }
 
-        if (is_blank_or_comment(input))
+        if (isEmpty(input))
         {
             continue;
         }
 
-        initialize_command(&currCommand);
-        parse_input(input, &currCommand);
+        makeCmd(&currCommand);
+        inputParser(input, &currCommand);
 
         if (currCommand.argc == 0)
         {
@@ -132,13 +134,13 @@ int main()
             continue;
         }
 
-        if (is_builtin_command(&currCommand))
+        if (isBuiltIn(&currCommand))
         {
-            run_builtin_command(&currCommand);
+            runCmd(&currCommand);
         }
         else
         {
-            run_external_command(&currCommand);
+            runExtCmd(&currCommand);
         }
 
         free_command(&currCommand);
@@ -148,7 +150,7 @@ int main()
 }
 
 
-void setup_signal_handlers()
+void signalHandlers()
 {
     /*
      * Sets up SIGINT and SIGTSTP for the parent shell.
@@ -164,14 +166,14 @@ void setup_signal_handlers()
     SIGINT_action.sa_flags = 0;
     sigaction(SIGINT, &SIGINT_action, NULL);
 
-    SIGTSTP_action.sa_handler = handle_sigtstp;
+    SIGTSTP_action.sa_handler = handleSigtstp;
     sigfillset(&SIGTSTP_action.sa_mask);
     SIGTSTP_action.sa_flags = 0;
     sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 }
 
 
-void handle_sigtstp(int signo)
+void handleSigtstp(int signo)
 {
     /*
      * Handles CTRL-Z.
@@ -216,7 +218,7 @@ void handle_sigtstp(int signo)
 }
 
 
-void print_delayed_foreground_message()
+void printFgMsg()
 {
     /*
      * Prints the SIGTSTP message after a foreground process has ended.
@@ -236,7 +238,7 @@ void print_delayed_foreground_message()
 }
 
 
-void initialize_command(struct commandLine* currCommand)
+void makeCmd(struct commandLine* currCommand)
 {
     /*
      * Initializes a commandLine struct before parsing into it.
@@ -282,7 +284,7 @@ void free_command(struct commandLine* currCommand)
 }
 
 
-void parse_input(char* input, struct commandLine* currCommand)
+void inputParser(char* input, struct commandLine* currCommand)
 {
     /*
      * Parses the user's command.
@@ -346,7 +348,7 @@ void parse_input(char* input, struct commandLine* currCommand)
 }
 
 
-bool is_blank_or_comment(char* input)
+bool isEmpty(char* input)
 {
     /*
      * Checks whether the input is blank or starts with #.
@@ -377,7 +379,7 @@ bool is_blank_or_comment(char* input)
 }
 
 
-bool is_builtin_command(struct commandLine* currCommand)
+bool isBuiltIn(struct commandLine* currCommand)
 {
     /*
      * Checks whether the command should be handled directly by smallsh.
@@ -399,7 +401,7 @@ bool is_builtin_command(struct commandLine* currCommand)
 }
 
 
-void run_builtin_command(struct commandLine* currCommand)
+void runCmd(struct commandLine* currCommand)
 {
     /*
      * Runs the built in commands.
@@ -411,7 +413,7 @@ void run_builtin_command(struct commandLine* currCommand)
 
     if (strcmp(currCommand->argv[0], "exit") == 0)
     {
-        kill_background_processes();
+        killBgProc();
         free_command(currCommand);
         exit(EXIT_SUCCESS);
     }
@@ -458,7 +460,7 @@ void print_status()
 }
 
 
-void run_external_command(struct commandLine* currCommand)
+void runExtCmd(struct commandLine* currCommand)
 {
     /*
      * Runs all commands that are not built into smallsh.
@@ -640,7 +642,7 @@ void run_external_command(struct commandLine* currCommand)
         {
             printf("background pid is %d\n", spawnPid);
             fflush(stdout);
-            add_background_process(spawnPid);
+            addBgProc(spawnPid);
         }
         else
         {
@@ -677,13 +679,13 @@ void run_external_command(struct commandLine* currCommand)
                 fflush(stdout);
             }
 
-            print_delayed_foreground_message();
+            printFgMsg();
         }
     }
 }
 
 
-void add_background_process(pid_t processId)
+void addBgProc(pid_t processId)
 {
     /*
      * Adds a background process to the array.
@@ -696,7 +698,7 @@ void add_background_process(pid_t processId)
 }
 
 
-void remove_background_process(int index)
+void rmBgProc(int index)
 {
     /*
      * Removes a background process from the array.
@@ -712,7 +714,7 @@ void remove_background_process(int index)
 }
 
 
-void check_background_processes()
+void checkBgProc()
 {
     /*
      * Checks if background processes have finished.
@@ -737,7 +739,7 @@ void check_background_processes()
         else if (finishedPid == -1)
         {
             // Something went wrong, so remove it from the list
-            remove_background_process(index);
+            rmBgProc(index);
         }
 
         else
@@ -756,13 +758,13 @@ void check_background_processes()
                 fflush(stdout);
             }
 
-            remove_background_process(index);
+            rmBgProc(index);
         }
     }
 }
 
 
-void kill_background_processes()
+void killBgProc()
 {
     /*
      * Kills all background processes before smallsh exits.
