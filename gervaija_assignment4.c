@@ -34,13 +34,13 @@
 #define MAXBGPROC 100
 
 
-struct command_line
+struct commandLine
 {
     char* argv[MAXARGS + 1];
     int argc;
-    char* input_file;
-    char* output_file;
-    bool is_bg;
+    char* inputFile;
+    char* outputFile;
+    bool backgroundProc;
 };
 
 
@@ -69,15 +69,15 @@ volatile sig_atomic_t printForegroundMessage = 0;
 void setup_signal_handlers();
 void handle_sigtstp(int signo);
 
-void initialize_command(struct command_line* currCommand);
-void free_command(struct command_line* currCommand);
-void parse_input(char* input, struct command_line* currCommand);
+void initialize_command(struct commandLine* currCommand);
+void free_command(struct commandLine* currCommand);
+void parse_input(char* input, struct commandLine* currCommand);
 
 bool is_blank_or_comment(char* input);
-bool is_builtin_command(struct command_line* currCommand);
+bool is_builtin_command(struct commandLine* currCommand);
 
-void run_builtin_command(struct command_line* currCommand);
-void run_external_command(struct command_line* currCommand);
+void run_builtin_command(struct commandLine* currCommand);
+void run_external_command(struct commandLine* currCommand);
 
 void check_background_processes();
 void add_background_process(pid_t processId);
@@ -91,7 +91,7 @@ void print_delayed_foreground_message();
 int main()
 {
     char input[MAXINPUTLEN];
-    struct command_line currCommand;
+    struct commandLine currCommand;
 
     setup_signal_handlers();
 
@@ -236,17 +236,17 @@ void print_delayed_foreground_message()
 }
 
 
-void initialize_command(struct command_line* currCommand)
+void initialize_command(struct commandLine* currCommand)
 {
     /*
-     * Initializes a command_line struct before parsing into it.
+     * Initializes a commandLine struct before parsing into it.
      */
     int index;
 
     currCommand->argc = 0;
-    currCommand->input_file = NULL;
-    currCommand->output_file = NULL;
-    currCommand->is_bg = false;
+    currCommand->inputFile = NULL;
+    currCommand->outputFile = NULL;
+    currCommand->backgroundProc = false;
 
     for (index = 0; index < MAXARGS + 1; index++)
     {
@@ -255,7 +255,7 @@ void initialize_command(struct command_line* currCommand)
 }
 
 
-void free_command(struct command_line* currCommand)
+void free_command(struct commandLine* currCommand)
 {
     /*
      * Frees the memory allocated by strdup.
@@ -268,21 +268,21 @@ void free_command(struct command_line* currCommand)
         currCommand->argv[index] = NULL;
     }
 
-    if (currCommand->input_file != NULL)
+    if (currCommand->inputFile != NULL)
     {
-        free(currCommand->input_file);
-        currCommand->input_file = NULL;
+        free(currCommand->inputFile);
+        currCommand->inputFile = NULL;
     }
 
-    if (currCommand->output_file != NULL)
+    if (currCommand->outputFile != NULL)
     {
-        free(currCommand->output_file);
-        currCommand->output_file = NULL;
+        free(currCommand->outputFile);
+        currCommand->outputFile = NULL;
     }
 }
 
 
-void parse_input(char* input, struct command_line* currCommand)
+void parse_input(char* input, struct commandLine* currCommand)
 {
     /*
      * Parses the user's command.
@@ -314,7 +314,7 @@ void parse_input(char* input, struct command_line* currCommand)
     // Only the final token can make the command run in the background
     if (strcmp(tokens[tokenCount - 1], "&") == 0)
     {
-        currCommand->is_bg = true;
+        currCommand->backgroundProc = true;
         tokenCount--;
     }
 
@@ -326,12 +326,12 @@ void parse_input(char* input, struct command_line* currCommand)
     {
         if (strcmp(tokens[index], "<") == 0)
         {
-            currCommand->input_file = strdup(tokens[index + 1]);
+            currCommand->inputFile = strdup(tokens[index + 1]);
             index += 2;
         }
         else if (strcmp(tokens[index], ">") == 0)
         {
-            currCommand->output_file = strdup(tokens[index + 1]);
+            currCommand->outputFile = strdup(tokens[index + 1]);
             index += 2;
         }
         else
@@ -377,7 +377,7 @@ bool is_blank_or_comment(char* input)
 }
 
 
-bool is_builtin_command(struct command_line* currCommand)
+bool is_builtin_command(struct commandLine* currCommand)
 {
     /*
      * Checks whether the command should be handled directly by smallsh.
@@ -399,7 +399,7 @@ bool is_builtin_command(struct command_line* currCommand)
 }
 
 
-void run_builtin_command(struct command_line* currCommand)
+void run_builtin_command(struct commandLine* currCommand)
 {
     /*
      * Runs the built in commands.
@@ -458,7 +458,7 @@ void print_status()
 }
 
 
-void run_external_command(struct command_line* currCommand)
+void run_external_command(struct commandLine* currCommand)
 {
     /*
      * Runs all commands that are not built into smallsh.
@@ -474,7 +474,7 @@ void run_external_command(struct command_line* currCommand)
     // If foreground-only mode is active, ignore the background option
     if (foregroundOnlyMode == 1)
     {
-        currCommand->is_bg = false;
+        currCommand->backgroundProc = false;
     }
 
     spawnPid = fork();
@@ -495,7 +495,7 @@ void run_external_command(struct command_line* currCommand)
          * Foreground children should die from CTRL-C.
          * Background children should ignore CTRL-C.
          */
-        if (currCommand->is_bg)
+        if (currCommand->backgroundProc)
         {
             child_SIGINT_action.sa_handler = SIG_IGN;
         }
@@ -522,13 +522,13 @@ void run_external_command(struct command_line* currCommand)
          * If this is a background process with no input redirection, use
          * /dev/null so it does not try to read from the terminal.
          */
-        if (currCommand->input_file != NULL)
+        if (currCommand->inputFile != NULL)
         {
-            sourceFD = open(currCommand->input_file, O_RDONLY);
+            sourceFD = open(currCommand->inputFile, O_RDONLY);
 
             if (sourceFD == -1)
             {
-                printf("cannot open %s for input\n", currCommand->input_file);
+                printf("cannot open %s for input\n", currCommand->inputFile);
                 fflush(stdout);
                 exit(1);
             }
@@ -544,7 +544,7 @@ void run_external_command(struct command_line* currCommand)
 
             close(sourceFD);
         }
-        else if (currCommand->is_bg)
+        else if (currCommand->backgroundProc)
         {
             sourceFD = open("/dev/null", O_RDONLY);
 
@@ -572,13 +572,13 @@ void run_external_command(struct command_line* currCommand)
          * If this is a background process with no output redirection, use
          * /dev/null so it does not print to the terminal.
          */
-        if (currCommand->output_file != NULL)
+        if (currCommand->outputFile != NULL)
         {
-            targetFD = open(currCommand->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            targetFD = open(currCommand->outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
             if (targetFD == -1)
             {
-                printf("cannot open %s for output\n", currCommand->output_file);
+                printf("cannot open %s for output\n", currCommand->outputFile);
                 fflush(stdout);
                 exit(1);
             }
@@ -594,7 +594,7 @@ void run_external_command(struct command_line* currCommand)
 
             close(targetFD);
         }
-        else if (currCommand->is_bg)
+        else if (currCommand->backgroundProc)
         {
             targetFD = open("/dev/null", O_WRONLY);
 
@@ -636,7 +636,7 @@ void run_external_command(struct command_line* currCommand)
          * If the command is in the background, do not wait.
          * If the command is in the foreground, wait until it finishes.
          */
-        if (currCommand->is_bg)
+        if (currCommand->backgroundProc)
         {
             printf("background pid is %d\n", spawnPid);
             fflush(stdout);
