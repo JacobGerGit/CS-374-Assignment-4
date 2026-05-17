@@ -1,31 +1,42 @@
 /*
  * Author: Jacob Gervais
  * GitHub username: JacobGerGit
- * Date:
+ * Date: 5/24/2026
  * Description: This file contains the implementation for smallsh.
  *              It supports built in commands, foreground and background
  *              processes, redirection, and signal handling.
  */
 
+ // prints
 #include <stdio.h>
+// bools
 #include <stdbool.h>
-#include <stdlib.h>
+// strcmp, strtok, etc.
 #include <string.h>
+// fork, exec, etc.
 #include <unistd.h>
+// EXIT_SUCCESS
+#include <stdlib.h>
+// data types
 #include <sys/types.h>
+// waitpid
 #include <sys/wait.h>
+// file control
 #include <fcntl.h>
+// signals
 #include <signal.h>
+// interrupted sys calls
 #include <errno.h>
 
-#define INPUT_LENGTH 2048
-#define MAX_ARGS 512
-#define MAX_BACKGROUND_PROCESSES 100
+// 
+#define MAXINPUTLEN 2048
+#define MAXARGS 512
+#define MAXBGPROC 100
 
 
 struct command_line
 {
-    char* argv[MAX_ARGS + 1];
+    char* argv[MAXARGS + 1];
     int argc;
     char* input_file;
     char* output_file;
@@ -42,7 +53,7 @@ int lastExitStatus = 0;
 int lastSignalStatus = 0;
 bool lastStatusWasSignal = false;
 
-pid_t backgroundPids[MAX_BACKGROUND_PROCESSES];
+pid_t backgroundPids[MAXBGPROC];
 int backgroundCount = 0;
 
 /*
@@ -79,7 +90,7 @@ void print_delayed_foreground_message();
 
 int main()
 {
-    char input[INPUT_LENGTH];
+    char input[MAXINPUTLEN];
     struct command_line currCommand;
 
     setup_signal_handlers();
@@ -101,7 +112,7 @@ int main()
          * If fgets gets interrupted by a signal, it can return NULL.
          * In that case, clearerr lets stdin keep working.
          */
-        if (fgets(input, INPUT_LENGTH, stdin) == NULL)
+        if (fgets(input, MAXINPUTLEN, stdin) == NULL)
         {
             clearerr(stdin);
             continue;
@@ -237,7 +248,7 @@ void initialize_command(struct command_line* currCommand)
     currCommand->output_file = NULL;
     currCommand->is_bg = false;
 
-    for (index = 0; index < MAX_ARGS + 1; index++)
+    for (index = 0; index < MAXARGS + 1; index++)
     {
         currCommand->argv[index] = NULL;
     }
@@ -281,13 +292,13 @@ void parse_input(char* input, struct command_line* currCommand)
      * a normal argument.
      */
     char* token;
-    char* tokens[MAX_ARGS + 5];
+    char* tokens[MAXARGS + 5];
     int tokenCount = 0;
     int index = 0;
 
     token = strtok(input, " \n");
 
-    while (token != NULL && tokenCount < MAX_ARGS + 5)
+    while (token != NULL && tokenCount < MAXARGS + 5)
     {
         tokens[tokenCount] = token;
         tokenCount++;
@@ -677,7 +688,7 @@ void add_background_process(pid_t processId)
     /*
      * Adds a background process to the array.
      */
-    if (backgroundCount < MAX_BACKGROUND_PROCESSES)
+    if (backgroundCount < MAXBGPROC)
     {
         backgroundPids[backgroundCount] = processId;
         backgroundCount++;
