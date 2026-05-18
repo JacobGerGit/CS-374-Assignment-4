@@ -46,7 +46,7 @@ struct commandLine
     bool backgroundProc;
 };
 
-// These are global because they need to be accessed from different functions.
+// A few useful global vars
 int lastExitStatus = 0;
 int lastSignalStatus = 0;
 bool lastStatusWasSignal = false;
@@ -54,10 +54,7 @@ bool lastStatusWasSignal = false;
 pid_t backgroundPids[MAXBGPROC];
 int backgroundCount = 0;
 
-/*
- * These are used for foreground-only mode.
- * sig_atomic_t is used because these can be changed inside a signal handler.
- */
+// Foreground-only mode
 volatile sig_atomic_t foregroundOnlyMode = 0;
 volatile sig_atomic_t foregroundProcessRunning = 0;
 volatile sig_atomic_t printForegroundMessage = 0;
@@ -66,11 +63,10 @@ volatile sig_atomic_t printForegroundMessage = 0;
 void handleSigtstp(int signo)
 {
     /*
-     * Handles CTRL-Z.
+     * Ctrl-Z handler
      *
      * If no foreground process is running, print the message right away.
-     * If a foreground process is running, wait until it finishes and then
-     * print the message.
+     * Else, wait until it finishes and then print the message.
      */
     char enterMessage[] = "\nEntering foreground-only mode (& is now ignored)\n";
     char exitMessage[] = "\nExiting foreground-only mode\n";
@@ -88,10 +84,6 @@ void handleSigtstp(int signo)
         printForegroundMessage = 2;
     }
 
-    /*
-     * printf should not be used in a signal handler.
-     * write is used here because it is safe for signal handlers.
-     */
     if (foregroundProcessRunning == 0)
     {
         if (printForegroundMessage == 1)
@@ -107,14 +99,13 @@ void handleSigtstp(int signo)
     }
 }
 
-
 void signalHandlers()
 {
     /*
-     * Sets up SIGINT and SIGTSTP for the parent shell.
+     * Set up SIGINT and SIGTSTP for parent shell
      *
-     * The parent ignores SIGINT, because CTRL-C should not kill smallsh.
-     * The parent handles SIGTSTP, because CTRL-Z toggles foreground-only mode.
+     * The parent ignores SIGINT
+     * The parent handles SIGTSTP
      */
     struct sigaction SIGINT_action = {0};
     struct sigaction SIGTSTP_action = {0};
@@ -133,9 +124,7 @@ void signalHandlers()
 
 void printFgMsg()
 {
-    /*
-     * Prints the SIGTSTP message after a foreground process has ended.
-     */
+    // Prints the SIGTSTP message after a foreground process has ended.
     if (printForegroundMessage == 1)
     {
         printf("\nEntering foreground-only mode (& is now ignored)\n");
@@ -153,9 +142,7 @@ void printFgMsg()
 
 void makeCmd(struct commandLine* currCommand)
 {
-    /*
-     * Initializes a commandLine struct before parsing into it.
-     */
+    // Set the command struct back to a clean state
     int index;
 
     currCommand->argc = 0;
@@ -170,11 +157,9 @@ void makeCmd(struct commandLine* currCommand)
 }
 
 
-void free_command(struct commandLine* currCommand)
+void freeCmdMem(struct commandLine* currCommand)
 {
-    /*
-     * Frees the memory allocated by strdup.
-     */
+    // Frees the memory allocated by strdup
     int index;
 
     for (index = 0; index < currCommand->argc; index++)
@@ -199,13 +184,7 @@ void free_command(struct commandLine* currCommand)
 
 void inputParser(char* input, struct commandLine* currCommand)
 {
-    /*
-     * Parses the user's command.
-     *
-     * I am storing the tokens first because & only means background if it is
-     * the last word. If & appears anywhere else, it should just be treated as
-     * a normal argument.
-     */
+    // Tokenize the user’s input and store those pieces in the command struct
     char* token;
     char* tokens[MAXARGS + 5];
     int tokenCount = 0;
@@ -220,23 +199,20 @@ void inputParser(char* input, struct commandLine* currCommand)
         token = strtok(NULL, " \n");
     }
 
-    // Early exit if there is nothing to parse
+    // Early exit if theres nothing to parse
     if (tokenCount == 0)
     {
         return;
     }
 
-    // Only the final token can make the command run in the background
+    // Check if last word is &, if so make it a background command
     if (strcmp(tokens[tokenCount - 1], "&") == 0)
     {
         currCommand->backgroundProc = true;
         tokenCount--;
     }
 
-    /*
-     * Go through the tokens and separate the actual command arguments from
-     * input and output redirection.
-     */
+    // Get the actual args 
     while (index < tokenCount)
     {
         if (strcmp(tokens[index], "<") == 0)
@@ -263,9 +239,7 @@ void inputParser(char* input, struct commandLine* currCommand)
 
 bool isEmpty(char* input)
 {
-    /*
-     * Checks whether the input is blank or starts with #.
-     */
+    // Check for blank or # to know whether to ignore line
     int index = 0;
 
     if (input[0] == '#')
@@ -294,9 +268,7 @@ bool isEmpty(char* input)
 
 bool isBuiltIn(struct commandLine* currCommand)
 {
-    /*
-     * Checks whether the command should be handled directly by smallsh.
-     */
+    // Check whether the command is exit, cd, or status
     if (strcmp(currCommand->argv[0], "exit") == 0)
     {
         return true;
@@ -313,12 +285,9 @@ bool isBuiltIn(struct commandLine* currCommand)
     return false;
 }
 
-
+// Print the status of the last foreground process.
 void printStatus()
 {
-    /*
-     * Prints the status of the last foreground process.
-     */
     if (lastStatusWasSignal)
     {
         printf("terminated by signal %d\n", lastSignalStatus);
@@ -331,12 +300,9 @@ void printStatus()
     fflush(stdout);
 }
 
-
+// Add a background process to the array, so long as there is room
 void addBgProc(pid_t processId)
 {
-    /*
-     * Adds a background process to the array.
-     */
     if (backgroundCount < MAXBGPROC)
     {
         backgroundPids[backgroundCount] = processId;
@@ -344,12 +310,9 @@ void addBgProc(pid_t processId)
     }
 }
 
-
+// Removes a background process from the array, then fix array
 void rmBgProc(int index)
 {
-    /*
-     * Removes a background process from the array.
-     */
     int currIndex;
 
     for (currIndex = index; currIndex < backgroundCount - 1; currIndex++)
@@ -360,15 +323,9 @@ void rmBgProc(int index)
     backgroundCount--;
 }
 
-
+// Loop through bg proc array and check if any of them have ended
 void checkBgProc()
 {
-    /*
-     * Checks if background processes have finished.
-     *
-     * WNOHANG means waitpid will check the process, but it will not block
-     * smallsh if the process is still running.
-     */
     int index = 0;
     int childStatus;
     pid_t finishedPid;
@@ -377,15 +334,15 @@ void checkBgProc()
     {
         finishedPid = waitpid(backgroundPids[index], &childStatus, WNOHANG);
 
+        // This background process is still running
         if (finishedPid == 0)
         {
-            // This background process is still running
             index++;
         }
 
+        // Something went wrong, so remove it from the list
         else if (finishedPid == -1)
         {
-            // Something went wrong, so remove it from the list
             rmBgProc(index);
         }
 
@@ -410,12 +367,9 @@ void checkBgProc()
     }
 }
 
-
+// If user types exit, terminate all bg procs
 void killBgProc()
 {
-    /*
-     * Kills all background processes before smallsh exits.
-     */
     int index;
 
     for (index = 0; index < backgroundCount; index++)
@@ -429,21 +383,15 @@ void killBgProc()
     }
 }
 
-
+// Handles exit, cd, and status. No child process required
 void runCmd(struct commandLine* currCommand)
 {
-    /*
-     * Runs the built in commands.
-     *
-     * Built in commands do not change the status value.
-     * Also, if the user puts & after one of these, it is just ignored.
-     */
-    char* homePath;
+    char * homePath;
 
     if (strcmp(currCommand->argv[0], "exit") == 0)
     {
         killBgProc();
-        free_command(currCommand);
+        freeCmdMem(currCommand);
         exit(EXIT_SUCCESS);
     }
 
@@ -470,12 +418,9 @@ void runCmd(struct commandLine* currCommand)
     }
 }
 
-
-void runExtCmd(struct commandLine* currCommand)
+// Runs all commands that are not built in
+void runExtCmd(struct commandLine * currCommand)
 {
-    /*
-     * Runs all commands that are not built into smallsh.
-     */
     pid_t spawnPid;
     int childStatus;
     int sourceFD;
@@ -736,7 +681,7 @@ int main()
 
         if (currCommand.argc == 0)
         {
-            free_command(&currCommand);
+            freeCmdMem(&currCommand);
             continue;
         }
 
@@ -749,7 +694,7 @@ int main()
             runExtCmd(&currCommand);
         }
 
-        free_command(&currCommand);
+        freeCmdMem(&currCommand);
     }
 
     return EXIT_SUCCESS;
