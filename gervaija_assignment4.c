@@ -7,9 +7,10 @@
  *              processes, redirection, and signal handling.
  */
 
- // Get rid of red squiggly lines
- #define _POSIX_C_SOURCE 200809L
- // prints
+// Get rid of red squiggly lines
+#define _POSIX_C_SOURCE 200809L
+
+// prints
 #include <stdio.h>
 // bools
 #include <stdbool.h>
@@ -30,12 +31,12 @@
 // interrupted sys calls
 #include <errno.h>
 
-// 
+// Define statements
 #define MAXINPUTLEN 2048
 #define MAXARGS 512
 #define MAXBGPROC 100
 
-
+// Command line struct
 struct commandLine
 {
     char* argv[MAXARGS + 1];
@@ -45,12 +46,7 @@ struct commandLine
     bool backgroundProc;
 };
 
-
-/*
- * These are global because they need to be accessed from different functions.
- * I usually avoid globals, but they make sense here because the shell needs to
- * remember status and signal mode for the whole time it is running.
- */
+// These are global because they need to be accessed from different functions.
 int lastExitStatus = 0;
 int lastSignalStatus = 0;
 bool lastStatusWasSignal = false;
@@ -65,112 +61,6 @@ int backgroundCount = 0;
 volatile sig_atomic_t foregroundOnlyMode = 0;
 volatile sig_atomic_t foregroundProcessRunning = 0;
 volatile sig_atomic_t printForegroundMessage = 0;
-
-
-/* Function declarations */
-void signalHandlers();
-void handleSigtstp(int signo);
-
-void makeCmd(struct commandLine* currCommand);
-void free_command(struct commandLine* currCommand);
-void inputParser(char* input, struct commandLine* currCommand);
-
-bool isEmpty(char* input);
-bool isBuiltIn(struct commandLine* currCommand);
-
-void runCmd(struct commandLine* currCommand);
-void runExtCmd(struct commandLine* currCommand);
-
-void checkBgProc();
-void addBgProc(pid_t processId);
-void rmBgProc(int index);
-void killBgProc();
-
-void print_status();
-void printFgMsg();
-
-
-int main()
-{
-    char input[MAXINPUTLEN];
-    struct commandLine currCommand;
-
-    signalHandlers();
-
-    while(true)
-    {
-        /*
-         * Background processes are checked before each prompt.
-         * This is so the message prints right before the user gets command
-         * line access again.
-         */
-        checkBgProc();
-        printFgMsg();
-
-        printf(": ");
-        fflush(stdout);
-
-        /*
-         * If fgets gets interrupted by a signal, it can return NULL.
-         * In that case, clearerr lets stdin keep working.
-         */
-        if (fgets(input, MAXINPUTLEN, stdin) == NULL)
-        {
-            clearerr(stdin);
-            continue;
-        }
-
-        if (isEmpty(input))
-        {
-            continue;
-        }
-
-        makeCmd(&currCommand);
-        inputParser(input, &currCommand);
-
-        if (currCommand.argc == 0)
-        {
-            free_command(&currCommand);
-            continue;
-        }
-
-        if (isBuiltIn(&currCommand))
-        {
-            runCmd(&currCommand);
-        }
-        else
-        {
-            runExtCmd(&currCommand);
-        }
-
-        free_command(&currCommand);
-    }
-
-    return EXIT_SUCCESS;
-}
-
-
-void signalHandlers()
-{
-    /*
-     * Sets up SIGINT and SIGTSTP for the parent shell.
-     *
-     * The parent ignores SIGINT, because CTRL-C should not kill smallsh.
-     * The parent handles SIGTSTP, because CTRL-Z toggles foreground-only mode.
-     */
-    struct sigaction SIGINT_action = {0};
-    struct sigaction SIGTSTP_action = {0};
-
-    SIGINT_action.sa_handler = SIG_IGN;
-    sigfillset(&SIGINT_action.sa_mask);
-    SIGINT_action.sa_flags = 0;
-    sigaction(SIGINT, &SIGINT_action, NULL);
-
-    SIGTSTP_action.sa_handler = handleSigtstp;
-    sigfillset(&SIGTSTP_action.sa_mask);
-    SIGTSTP_action.sa_flags = 0;
-    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
-}
 
 
 void handleSigtstp(int signo)
@@ -215,6 +105,29 @@ void handleSigtstp(int signo)
 
         printForegroundMessage = 0;
     }
+}
+
+
+void signalHandlers()
+{
+    /*
+     * Sets up SIGINT and SIGTSTP for the parent shell.
+     *
+     * The parent ignores SIGINT, because CTRL-C should not kill smallsh.
+     * The parent handles SIGTSTP, because CTRL-Z toggles foreground-only mode.
+     */
+    struct sigaction SIGINT_action = {0};
+    struct sigaction SIGTSTP_action = {0};
+
+    SIGINT_action.sa_handler = SIG_IGN;
+    sigfillset(&SIGINT_action.sa_mask);
+    SIGINT_action.sa_flags = 0;
+    sigaction(SIGINT, &SIGINT_action, NULL);
+
+    SIGTSTP_action.sa_handler = handleSigtstp;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    SIGTSTP_action.sa_flags = 0;
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 }
 
 
@@ -401,6 +314,122 @@ bool isBuiltIn(struct commandLine* currCommand)
 }
 
 
+void printStatus()
+{
+    /*
+     * Prints the status of the last foreground process.
+     */
+    if (lastStatusWasSignal)
+    {
+        printf("terminated by signal %d\n", lastSignalStatus);
+    }
+    else
+    {
+        printf("exit value %d\n", lastExitStatus);
+    }
+
+    fflush(stdout);
+}
+
+
+void addBgProc(pid_t processId)
+{
+    /*
+     * Adds a background process to the array.
+     */
+    if (backgroundCount < MAXBGPROC)
+    {
+        backgroundPids[backgroundCount] = processId;
+        backgroundCount++;
+    }
+}
+
+
+void rmBgProc(int index)
+{
+    /*
+     * Removes a background process from the array.
+     */
+    int currIndex;
+
+    for (currIndex = index; currIndex < backgroundCount - 1; currIndex++)
+    {
+        backgroundPids[currIndex] = backgroundPids[currIndex + 1];
+    }
+
+    backgroundCount--;
+}
+
+
+void checkBgProc()
+{
+    /*
+     * Checks if background processes have finished.
+     *
+     * WNOHANG means waitpid will check the process, but it will not block
+     * smallsh if the process is still running.
+     */
+    int index = 0;
+    int childStatus;
+    pid_t finishedPid;
+
+    while (index < backgroundCount)
+    {
+        finishedPid = waitpid(backgroundPids[index], &childStatus, WNOHANG);
+
+        if (finishedPid == 0)
+        {
+            // This background process is still running
+            index++;
+        }
+
+        else if (finishedPid == -1)
+        {
+            // Something went wrong, so remove it from the list
+            rmBgProc(index);
+        }
+
+        else
+        {
+            // This background process finished
+            if (WIFEXITED(childStatus))
+            {
+                printf("background pid %d is done: exit value %d\n",
+                       finishedPid, WEXITSTATUS(childStatus));
+                fflush(stdout);
+            }
+            else if (WIFSIGNALED(childStatus))
+            {
+                printf("background pid %d is done: terminated by signal %d\n",
+                       finishedPid, WTERMSIG(childStatus));
+                fflush(stdout);
+            }
+
+            rmBgProc(index);
+        }
+    }
+}
+
+
+void killBgProc()
+{
+    /*
+     * Kills all background processes before smallsh exits.
+     */
+    int index;
+
+    for (index = 0; index < backgroundCount; index++)
+    {
+        kill(backgroundPids[index], SIGTERM);
+    }
+
+    for (index = 0; index < backgroundCount; index++)
+    {
+        waitpid(backgroundPids[index], NULL, 0);
+    }
+}
+
+
 void runCmd(struct commandLine* currCommand)
 {
     /*
@@ -437,26 +466,8 @@ void runCmd(struct commandLine* currCommand)
 
     else if (strcmp(currCommand->argv[0], "status") == 0)
     {
-        print_status();
+        printStatus();
     }
-}
-
-
-void print_status()
-{
-    /*
-     * Prints the status of the last foreground process.
-     */
-    if (lastStatusWasSignal)
-    {
-        printf("terminated by signal %d\n", lastSignalStatus);
-    }
-    else
-    {
-        printf("exit value %d\n", lastExitStatus);
-    }
-
-    fflush(stdout);
 }
 
 
@@ -685,100 +696,61 @@ void runExtCmd(struct commandLine* currCommand)
 }
 
 
-void addBgProc(pid_t processId)
+int main()
 {
-    /*
-     * Adds a background process to the array.
-     */
-    if (backgroundCount < MAXBGPROC)
+    char input[MAXINPUTLEN];
+    struct commandLine currCommand;
+
+    signalHandlers();
+
+    while(true)
     {
-        backgroundPids[backgroundCount] = processId;
-        backgroundCount++;
-    }
-}
+        /*
+         * Background processes are checked before each prompt.
+         * This is so the message prints right before the user gets command
+         * line access again.
+         */
+        checkBgProc();
+        printFgMsg();
 
+        printf(": ");
+        fflush(stdout);
 
-void rmBgProc(int index)
-{
-    /*
-     * Removes a background process from the array.
-     */
-    int currIndex;
-
-    for (currIndex = index; currIndex < backgroundCount - 1; currIndex++)
-    {
-        backgroundPids[currIndex] = backgroundPids[currIndex + 1];
-    }
-
-    backgroundCount--;
-}
-
-
-void checkBgProc()
-{
-    /*
-     * Checks if background processes have finished.
-     *
-     * WNOHANG means waitpid will check the process, but it will not block
-     * smallsh if the process is still running.
-     */
-    int index = 0;
-    int childStatus;
-    pid_t finishedPid;
-
-    while (index < backgroundCount)
-    {
-        finishedPid = waitpid(backgroundPids[index], &childStatus, WNOHANG);
-
-        if (finishedPid == 0)
+        /*
+         * If fgets gets interrupted by a signal, it can return NULL.
+         * In that case, clearerr lets stdin keep working.
+         */
+        if (fgets(input, MAXINPUTLEN, stdin) == NULL)
         {
-            // This background process is still running
-            index++;
+            clearerr(stdin);
+            continue;
         }
 
-        else if (finishedPid == -1)
+        if (isEmpty(input))
         {
-            // Something went wrong, so remove it from the list
-            rmBgProc(index);
+            continue;
         }
 
+        makeCmd(&currCommand);
+        inputParser(input, &currCommand);
+
+        if (currCommand.argc == 0)
+        {
+            free_command(&currCommand);
+            continue;
+        }
+
+        if (isBuiltIn(&currCommand))
+        {
+            runCmd(&currCommand);
+        }
         else
         {
-            // This background process finished
-            if (WIFEXITED(childStatus))
-            {
-                printf("background pid %d is done: exit value %d\n",
-                       finishedPid, WEXITSTATUS(childStatus));
-                fflush(stdout);
-            }
-            else if (WIFSIGNALED(childStatus))
-            {
-                printf("background pid %d is done: terminated by signal %d\n",
-                       finishedPid, WTERMSIG(childStatus));
-                fflush(stdout);
-            }
-
-            rmBgProc(index);
+            runExtCmd(&currCommand);
         }
+
+        free_command(&currCommand);
     }
+
+    return EXIT_SUCCESS;
 }
-
-
-void killBgProc()
-{
-    /*
-     * Kills all background processes before smallsh exits.
-     */
-    int index;
-
-    for (index = 0; index < backgroundCount; index++)
-    {
-        kill(backgroundPids[index], SIGTERM);
-    }
-
-    for (index = 0; index < backgroundCount; index++)
-    {
-        waitpid(backgroundPids[index], NULL, 0);
-    }
-}
-
