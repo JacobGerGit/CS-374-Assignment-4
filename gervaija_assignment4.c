@@ -47,9 +47,9 @@ struct commandLine
 };
 
 // A few useful global vars
-int lastExitStatus = 0;
-int lastSignalStatus = 0;
-bool lastStatusWasSignal = false;
+int exitStatus = 0;
+int signalStatus = 0;
+bool wasStatusSignal = false;
 
 pid_t backgroundPids[MAXBGPROC];
 int backgroundCount = 0;
@@ -62,17 +62,13 @@ volatile sig_atomic_t printForegroundMessage = 0;
 
 void handleSigtstp(int signo)
 {
-    /*
-     * Ctrl-Z handler
-     *
-     * If no foreground process is running, print the message right away.
-     * Else, wait until it finishes and then print the message.
-     */
+    // Ctrl-Z toggles foreground-only mode and decides whether to print the message now or later
     char enterMessage[] = "\nEntering foreground-only mode (& is now ignored)\n";
     char exitMessage[] = "\nExiting foreground-only mode\n";
 
     (void) signo;
 
+    // Toggle foreground-only mode on or off
     if (foregroundOnlyMode == 0)
     {
         foregroundOnlyMode = 1;
@@ -84,6 +80,7 @@ void handleSigtstp(int signo)
         printForegroundMessage = 2;
     }
 
+    // If the shell is at the prompt, print the message right away
     if (foregroundProcessRunning == 0)
     {
         if (printForegroundMessage == 1)
@@ -101,12 +98,7 @@ void handleSigtstp(int signo)
 
 void signalHandlers()
 {
-    /*
-     * Set up SIGINT and SIGTSTP for parent shell
-     *
-     * The parent ignores SIGINT
-     * The parent handles SIGTSTP
-     */
+    // Sets up how the parent shell handles Ctrl-C and Ctrl-Z
     struct sigaction SIGINT_action = {0};
     struct sigaction SIGTSTP_action = {0};
 
@@ -125,6 +117,7 @@ void signalHandlers()
 void printFgMsg()
 {
     // Prints the SIGTSTP message after a foreground process has ended.
+    // Print whichever foreground-only message is waiting
     if (printForegroundMessage == 1)
     {
         printf("\nEntering foreground-only mode (& is now ignored)\n");
@@ -162,12 +155,14 @@ void freeCmdMem(struct commandLine* currCommand)
     // Frees the memory allocated by strdup
     int index;
 
+    // Free each command argument
     for (index = 0; index < currCommand->argc; index++)
     {
         free(currCommand->argv[index]);
         currCommand->argv[index] = NULL;
     }
 
+    // Free input and output files if they were used
     if (currCommand->inputFile != NULL)
     {
         free(currCommand->inputFile);
@@ -192,6 +187,7 @@ void inputParser(char* input, struct commandLine* currCommand)
 
     token = strtok(input, " \n");
 
+    // Store each word from the input line
     while (token != NULL && tokenCount < MAXARGS + 5)
     {
         tokens[tokenCount] = token;
@@ -199,7 +195,7 @@ void inputParser(char* input, struct commandLine* currCommand)
         token = strtok(NULL, " \n");
     }
 
-    // Early exit if theres nothing to parse
+    // Early exit if there is nothing to parse
     if (tokenCount == 0)
     {
         return;
@@ -212,7 +208,7 @@ void inputParser(char* input, struct commandLine* currCommand)
         tokenCount--;
     }
 
-    // Get the actual args 
+    // Sort tokens into args, input file, or output file
     while (index < tokenCount)
     {
         if (strcmp(tokens[index], "<") == 0)
@@ -242,11 +238,13 @@ bool isEmpty(char* input)
     // Check for blank or # to know whether to ignore line
     int index = 0;
 
+    // Ignore lines that start with a comment
     if (input[0] == '#')
     {
         return true;
     }
 
+    // Look for any real character that is not just whitespace
     while (input[index] != '\0')
     {
         if (input[index] == '\n')
@@ -285,16 +283,16 @@ bool isBuiltIn(struct commandLine* currCommand)
     return false;
 }
 
-// Print the status of the last foreground process.
+// Print the status of the last foreground process
 void printStatus()
 {
-    if (lastStatusWasSignal)
+    if (wasStatusSignal)
     {
-        printf("terminated by signal %d\n", lastSignalStatus);
+        printf("terminated by signal %d\n", signalStatus);
     }
     else
     {
-        printf("exit value %d\n", lastExitStatus);
+        printf("exit value %d\n", exitStatus);
     }
 
     fflush(stdout);
@@ -310,7 +308,7 @@ void addBgProc(pid_t processId)
     }
 }
 
-// Removes a background process from the array, then fix array
+// Removes a background process from the array, then fixes the array
 void rmBgProc(int index)
 {
     int currIndex;
@@ -388,6 +386,7 @@ void runCmd(struct commandLine* currCommand)
 {
     char * homePath;
 
+    // Choose which built in command to run
     if (strcmp(currCommand->argv[0], "exit") == 0)
     {
         killBgProc();
@@ -397,6 +396,7 @@ void runCmd(struct commandLine* currCommand)
 
     else if (strcmp(currCommand->argv[0], "cd") == 0)
     {
+        // If cd has no argument, go to HOME
         if (currCommand->argc == 1)
         {
             homePath = getenv("HOME");
@@ -435,24 +435,21 @@ void runExtCmd(struct commandLine * currCommand)
         currCommand->backgroundProc = false;
     }
 
+    // Fork a child process for the external command
     spawnPid = fork();
 
+    // Handle fork result
     if (spawnPid == -1)
     {
         perror("fork");
         fflush(stderr);
-        lastExitStatus = 1;
-        lastStatusWasSignal = false;
+        exitStatus = 1;
+        wasStatusSignal = false;
     }
 
     else if (spawnPid == 0)
     {
-        /*
-         * This is the child process.
-         *
-         * Foreground children should die from CTRL-C.
-         * Background children should ignore CTRL-C.
-         */
+        // Set up Ctrl-C behavior for foreground and background child processes
         if (currCommand->backgroundProc)
         {
             child_SIGINT_action.sa_handler = SIG_IGN;
@@ -466,24 +463,19 @@ void runExtCmd(struct commandLine * currCommand)
         child_SIGINT_action.sa_flags = 0;
         sigaction(SIGINT, &child_SIGINT_action, NULL);
 
-        /*
-         * All children ignore CTRL-Z.
-         * Only the parent shell actually toggles foreground-only mode.
-         */
+        // Make children ignore Ctrl-Z because only the parent shell handles foreground-only mode
         child_SIGTSTP_action.sa_handler = SIG_IGN;
         sigfillset(&child_SIGTSTP_action.sa_mask);
         child_SIGTSTP_action.sa_flags = 0;
         sigaction(SIGTSTP, &child_SIGTSTP_action, NULL);
 
-        /*
-         * Input redirection.
-         * If this is a background process with no input redirection, use
-         * /dev/null so it does not try to read from the terminal.
-         */
+        // Handle input redirection, or use /dev/null for background commands with no input file
+        // Redirect input if the user gave an input file
         if (currCommand->inputFile != NULL)
         {
             sourceFD = open(currCommand->inputFile, O_RDONLY);
 
+            // Exit child if input file cannot be opened
             if (sourceFD == -1)
             {
                 printf("cannot open %s for input\n", currCommand->inputFile);
@@ -525,15 +517,13 @@ void runExtCmd(struct commandLine * currCommand)
             close(sourceFD);
         }
 
-        /*
-         * Output redirection.
-         * If this is a background process with no output redirection, use
-         * /dev/null so it does not print to the terminal.
-         */
+        // Handle output redirection, or use /dev/null for background commands with no output file
+        // Redirect output if the user gave an output file
         if (currCommand->outputFile != NULL)
         {
             targetFD = open(currCommand->outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
+            // Exit child if output file cannot be opened
             if (targetFD == -1)
             {
                 printf("cannot open %s for output\n", currCommand->outputFile);
@@ -575,10 +565,7 @@ void runExtCmd(struct commandLine * currCommand)
             close(targetFD);
         }
 
-        /*
-         * Replace the child process with the command.
-         * If execvp returns, it means something went wrong.
-         */
+        // Replace the child process with the command, or print an error if execvp fails
         execvp(currCommand->argv[0], currCommand->argv);
 
         perror(currCommand->argv[0]);
@@ -588,12 +575,8 @@ void runExtCmd(struct commandLine * currCommand)
 
     else
     {
-        /*
-         * This is the parent process.
-         *
-         * If the command is in the background, do not wait.
-         * If the command is in the foreground, wait until it finishes.
-         */
+        // Parent either tracks a background process or waits for a foreground process
+        // Background commands return control to the user right away
         if (currCommand->backgroundProc)
         {
             printf("background pid is %d\n", spawnPid);
@@ -602,12 +585,10 @@ void runExtCmd(struct commandLine * currCommand)
         }
         else
         {
+            // Foreground commands make the parent wait
             foregroundProcessRunning = 1;
 
-            /*
-             * waitpid can be interrupted by SIGTSTP.
-             * If that happens, errno will be EINTR, so keep waiting.
-             */
+            // If waitpid gets interrupted by Ctrl-Z, keep waiting for the foreground process
             while (waitpid(spawnPid, &childStatus, 0) == -1)
             {
                 if (errno != EINTR)
@@ -620,18 +601,19 @@ void runExtCmd(struct commandLine * currCommand)
 
             foregroundProcessRunning = 0;
 
+            // Save how the foreground process ended
             if (WIFEXITED(childStatus))
             {
-                lastExitStatus = WEXITSTATUS(childStatus);
-                lastSignalStatus = 0;
-                lastStatusWasSignal = false;
+                exitStatus = WEXITSTATUS(childStatus);
+                signalStatus = 0;
+                wasStatusSignal = false;
             }
             else if (WIFSIGNALED(childStatus))
             {
-                lastSignalStatus = WTERMSIG(childStatus);
-                lastStatusWasSignal = true;
+                signalStatus = WTERMSIG(childStatus);
+                wasStatusSignal = true;
 
-                printf("terminated by signal %d\n", lastSignalStatus);
+                printf("terminated by signal %d\n", signalStatus);
                 fflush(stdout);
             }
 
@@ -650,27 +632,21 @@ int main()
 
     while(true)
     {
-        /*
-         * Background processes are checked before each prompt.
-         * This is so the message prints right before the user gets command
-         * line access again.
-         */
+        // Check background processes before showing the next prompt
         checkBgProc();
         printFgMsg();
 
         printf(": ");
         fflush(stdout);
 
-        /*
-         * If fgets gets interrupted by a signal, it can return NULL.
-         * In that case, clearerr lets stdin keep working.
-         */
+        // If fgets is interrupted by a signal, reset stdin and keep the shell running
         if (fgets(input, MAXINPUTLEN, stdin) == NULL)
         {
             clearerr(stdin);
             continue;
         }
 
+        // Ignore blank lines and comments
         if (isEmpty(input))
         {
             continue;
@@ -679,12 +655,14 @@ int main()
         makeCmd(&currCommand);
         inputParser(input, &currCommand);
 
+        // If parsing found no command, start over
         if (currCommand.argc == 0)
         {
             freeCmdMem(&currCommand);
             continue;
         }
 
+        // Run built in commands directly, otherwise fork
         if (isBuiltIn(&currCommand))
         {
             runCmd(&currCommand);
